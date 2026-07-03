@@ -1,8 +1,15 @@
 # ============================================
 # PowerShell HTTP File Server — Dynamic Edition
-# Usage: Run as Administrator
+# Usage: Just double-click or run in PowerShell
 # Access: http://YOUR_IP:8080
 # ============================================
+
+# FIX #1: Auto-elevate to Administrator if not already running as admin
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
+    Write-Host "Not running as Administrator — relaunching with elevation..." -ForegroundColor Yellow
+    Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
 
 $basePath = "C:\Users"
 $port     = 8080
@@ -288,7 +295,8 @@ try {
     }
 }
 finally {
-    $http.Stop()
-    $http.Close()
+    # FIX #3: Guard against already-disposed object if Start() failed
+    try { $http.Stop() } catch {}
+    try { $http.Close() } catch {}
     Write-Host "Server stopped." -ForegroundColor Red
 }
